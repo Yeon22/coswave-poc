@@ -1,0 +1,4 @@
+[
+  { "id": 1, "bpm_limit": 1000, "rpm_limit": 100 },
+  { "id": 2, "bpm_limit": 2000, "rpm_limit": 150 }
+]
