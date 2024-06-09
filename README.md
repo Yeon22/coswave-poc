@@ -15,5 +15,5 @@ go run main.go
 ### request 시뮬레이션
 
 ```
-curl -i "localhost:8080"
+curl -d "Random Text for Test" -i "localhost:8080"
 ```

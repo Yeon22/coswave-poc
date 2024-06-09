@@ -1,4 +1,7 @@
-[
-  { "id": 1, "bpm_limit": 1000, "rpm_limit": 100 },
-  { "id": 2, "bpm_limit": 2000, "rpm_limit": 150 }
-]
+{
+  "nodes": [
+    { "id": 1, "bpm_limit": 100, "rpm_limit": 10 },
+    { "id": 2, "bpm_limit": 200, "rpm_limit": 15 }
+  ],
+  "port": 8080
+}

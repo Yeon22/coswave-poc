@@ -6,92 +6,94 @@ import (
 	"net/http"
 	"os"
 	"sync"
-	"time"
 )
 
+type Config struct {
+    Nodes []*NodeConfig `json:"nodes"`
+    Port  int           `json:"port"`
+}
+
+type NodeConfig struct {
+    ID       int `json:"id"`
+    BPMLimit int64 `json:"bpm_limit"`
+    RPMLimit int `json:"rpm_limit"`
+}
+
 type Node struct {
-	ID       int `json:"id"`
-	BPMLimit int `json:"bpm_limit"`
-	RPMLimit int `json:"rpm_limit"`
+    NodeConfig
+    currentBPM  int64
+    currentRPM  int
 }
 
 type LoadBalancer struct {
-	nodes      []*Node // slice는 배열과 유사하지만 길이를 원하는대로 늘리거나 줄일 수 있음
-	requests   map[int]int
-	bytes      map[int]int
-	mux sync.Mutex
+	nodes   []*Node // slice는 배열과 유사하지만 길이를 원하는대로 늘리거나 줄일 수 있음
+	mux     sync.Mutex
 }
 
 func NewLoadBalancer() *LoadBalancer {
     // & 주소 참조, * 주소가 가리키는 실제
-	return &LoadBalancer{
-		nodes:    make([]*Node, 0), // make() 함수는 런타임 초기화시 필요한 데이터구조(slice, map, channel)를 초기화할 때 사용
-		requests: make(map[int]int), // map[KeyType]ValueType
-		bytes:    make(map[int]int),
-	}
+    // make() 함수는 런타임 초기화시 필요한 데이터구조(slice, map, channel)를 초기화할 때 사용
+	return &LoadBalancer{nodes: make([]*Node, 0)}
 }
 
-func (lb *LoadBalancer) AddNode(node *Node) {
+func NewNode(nodeConfig *NodeConfig) *Node {
+    return &Node{
+        NodeConfig: *nodeConfig,
+        currentBPM: 0,
+        currentRPM: 0,
+    }
+}
+
+func (lb *LoadBalancer) AddNode(nodeConfig *NodeConfig) {
 	lb.mux.Lock()
 	defer lb.mux.Unlock()
+
+    node := NewNode(nodeConfig)
 	lb.nodes = append(lb.nodes, node)
 }
 
-func (lb *LoadBalancer) ProcessRequest(nodeID int, bodySize int) bool {
+func (lb *LoadBalancer) ProcessRequest(bodySize int64) bool {
 	lb.mux.Lock()
 	defer lb.mux.Unlock()
 
-	lb.requests[nodeID]++
-	lb.bytes[nodeID] += bodySize
+    // 모든 노드에 대해 요청 처리를 시도합니다.
+    for _, node := range lb.nodes {
+        increasedRPM := node.currentRPM + 1
+        increasedBPM := node.currentBPM + bodySize
 
-	node := lb.getNodeByID(nodeID)
-	if node == nil {
-		return false
-	}
+        // 노드의 요청 및 바이트 제한을 확인합니다.
+        if increasedRPM <= node.RPMLimit && increasedBPM <= node.BPMLimit {
+            node.currentBPM = increasedBPM
+            node.currentRPM = increasedRPM
 
-	if lb.requests[nodeID] > node.RPMLimit || lb.bytes[nodeID] > node.BPMLimit {
-		return false
-	}
+            fmt.Printf("Request processed by node %d\n", node.ID)
+            return true // 요청이 처리되었습니다.
+        }
+    }
 
-	return true
-}
-
-func (lb *LoadBalancer) getNodeByID(nodeID int) *Node {
-	for _, node := range lb.nodes {
-		if node.ID == nodeID {
-			return node
-		}
-	}
-	return nil
+	return false
 }
 
 func main() {
-	nodes, err := readConfig("config.json")
+	config, err := readConfig("config.json")
 	if err != nil {
 		fmt.Println("Error reading config:", err)
 		return
 	}
 
 	lb := NewLoadBalancer()
-	for _, node := range nodes {
+	for _, node := range config.Nodes {
 		lb.AddNode(node)
 	}
 
     http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-        // request 시뮬레이션
-        for i := 0; i < 200; i++ {
-            bodySize := 100
-            nodeID := 1
-            if i%2 == 0 {
-                nodeID = 2
-            }
-            if lb.ProcessRequest(nodeID, bodySize) {
-                fmt.Printf("Request %d processed by node %d\n", i+1, nodeID)
-            } else {
-                fmt.Printf("Request %d rejected by node %d due to rate limit\n", i+1, nodeID)
-            }
-    
-            time.Sleep(time.Millisecond * 100) // 요청 딜레이 시뮬레이션
+        fmt.Println(r.ContentLength)
+        if lb.ProcessRequest(r.ContentLength) {
+            fmt.Printf("Request processed successfully\n")
+        } else {
+            fmt.Printf("All nodes are overloaded. Request rejected\n")
+            http.Error(w, "All nodes are overloaded. Request rejected", http.StatusServiceUnavailable)
+            return
         }
 
         // 모든 요청 처리가 끝나면 "Done" 응답 보내기
@@ -100,22 +102,22 @@ func main() {
         w.Write([]byte("Done"))
     })
 
-	fmt.Println("Server listening on port 8080...")
-	http.ListenAndServe(":8080", nil)
+	fmt.Println("Server listening on port: ", config.Port)
+	http.ListenAndServe(fmt.Sprintf(":%d", config.Port), nil)
 }
 
-func readConfig(filename string) ([]*Node, error) {
-	var nodes []*Node
+func readConfig(filename string) (*Config, error) {
+	var config *Config
 
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
 
-	err = json.Unmarshal(data, &nodes)
+	err = json.Unmarshal(data, &config)
 	if err != nil {
 		return nil, err
 	}
 
-	return nodes, nil
+	return config, nil
 }
